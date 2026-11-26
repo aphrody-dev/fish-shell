@@ -2063,8 +2063,12 @@ mod tests {
         // The bug was that "a=" would produce an error but not be consumed,
         // leading to an infinite loop.
 
-        // By itself it should produce an error.
+        // By itself it is a bare assignment, like `set a ''`.
         let ast = ast::parse(L!("a="), ParseTreeFlags::default(), None);
+        assert!(!ast.errored());
+
+        // After a pipe it should produce an error.
+        let ast = ast::parse(L!("true | a="), ParseTreeFlags::default(), None);
         assert!(ast.errored());
 
         let flags = ParseTreeFlags {
