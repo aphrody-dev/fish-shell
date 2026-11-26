@@ -204,21 +204,36 @@ fn posix_shell(opts: &FishCmdOpts) -> Option<(posix_fallback::Mode, OsString, Os
     (!name.as_bytes().starts_with(b"fish")).then_some((mode, shell, name))
 }
 
-/// `. '<file>'; `: what code handed to the POSIX shell runs first, so it sees the environment
-/// that fish's config gives fish (`$FISH_POSIX_ENV`, default /etc/aphrody/env.sh; empty: none).
-/// It goes on the first line so line numbers do not move. BASH_ENV would not do: bash skips it
-/// when run by sshd.
+/// `. '<file>'; …`: what code handed to the POSIX shell runs first, so it sees the environment
+/// that fish's config gives fish. `$FISH_POSIX_ENV` is a colon-separated list of files (default
+/// `~/.config/aphrody/env.sh:/etc/aphrody/env.sh`, the twins of the user's and the system's fleet
+/// fish files, in fish's order); unreadable ones are skipped. It goes on the first line so line
+/// numbers do not move. BASH_ENV would not do: bash skips it when run by sshd.
 fn posix_env_prefix() -> Vec<u8> {
-    let path = env::var_os("FISH_POSIX_ENV").unwrap_or_else(|| "/etc/aphrody/env.sh".into());
-    if path.is_empty() || nix::unistd::access(Path::new(&path), AccessFlags::R_OK).is_err() {
-        return vec![];
+    let list = env::var_os("FISH_POSIX_ENV").unwrap_or_else(|| {
+        let home = env::var_os("HOME").unwrap_or_default();
+        OsString::from_vec(
+            [
+                home.as_bytes(),
+                b"/.config/aphrody/env.sh:/etc/aphrody/env.sh",
+            ]
+            .concat(),
+        )
+    });
+    let mut prefix = vec![];
+    for path in list.as_bytes().split(|&b| b == b':') {
+        let path = OsStr::from_bytes(path);
+        if path.is_empty() || nix::unistd::access(Path::new(path), AccessFlags::R_OK).is_err() {
+            continue;
+        }
+        let quoted = path
+            .as_bytes()
+            .split(|&b| b == b'\'')
+            .collect::<Vec<_>>()
+            .join(&b"'\\''"[..]);
+        prefix.extend([&b". '"[..], &quoted, b"'; "].concat());
     }
-    let quoted = path
-        .as_bytes()
-        .split(|&b| b == b'\'')
-        .collect::<Vec<_>>()
-        .join(&b"'\\''"[..]);
-    [&b". '"[..], &quoted, b"'; "].concat()
+    prefix
 }
 
 fn exec_failed(shell: &OsStr, err: std::io::Error) {

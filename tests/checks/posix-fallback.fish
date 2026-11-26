@@ -11,6 +11,11 @@ echo 'export FLEET_VAR=from-env-file' >env.sh
 FISH_POSIX_ENV=$PWD/env.sh $fish -c 'for i in 1; do echo "$FLEET_VAR line $LINENO"; done'
 # CHECK: from-env-file line 1
 
+# A list of files, sourced in order; missing ones are skipped.
+echo 'export FLEET_VAR=user; export FLEET_USER=1' >user.sh
+FISH_POSIX_ENV=$PWD/user.sh:$PWD/missing.sh:$PWD/env.sh $fish -c 'for i in 1; do echo "$FLEET_VAR $FLEET_USER"; done'
+# CHECK: from-env-file 1
+
 # With no command and stdin not a terminal, stdin goes to the POSIX shell too...
 printf '%s\n' 'for f in x; do echo "stdin $f"; done' 'echo "${FLEET_VAR:-unset}"' | FISH_POSIX_ENV=$PWD/env.sh $fish
 # CHECK: stdin x
