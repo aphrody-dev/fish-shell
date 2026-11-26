@@ -755,7 +755,8 @@ pub fn env_init(paths: Option<&ConfigPaths>, no_config: bool) {
 
     // Complain about invalid config paths.
     // HACK: Assume the defaults are correct.
-    if !no_config {
+    // Only interactive sessions save history and universal variables, so only they complain.
+    if !no_config && is_interactive_session() {
         path_emit_config_directory_messages(vars);
     }
 

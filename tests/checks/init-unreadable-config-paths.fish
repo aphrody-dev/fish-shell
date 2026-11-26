@@ -3,10 +3,15 @@
 
 mkdir cache-home config-home data-home
 chmod 000 cache-home config-home data-home
+# Non-interactive sessions save nothing there, so they do not complain.
 XDG_CACHE_HOME=$PWD/cache-home \
     XDG_CONFIG_HOME=$PWD/config-home \
     XDG_DATA_HOME=$PWD/data-home \
     $fish -c true
+XDG_CACHE_HOME=$PWD/cache-home \
+    XDG_CONFIG_HOME=$PWD/config-home \
+    XDG_DATA_HOME=$PWD/data-home \
+    $fish -i -c true </dev/null
 # CHECKERR: error: can not save history
 # CHECKERR: warning-path: Unable to locate data directory derived from $XDG_DATA_HOME: '{{.*}}/data-home/fish'.
 # CHECKERR: warning-path: The error was 'Permission denied (os error 13)'.
