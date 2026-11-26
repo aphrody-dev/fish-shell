@@ -1,8 +1,15 @@
 # fish for the build fleet
 
 Branch `aphrody/fleet` of fish-shell/fish-shell. It is the login shell of ubuntu on n1, n2 and n3,
-and of root on n2: `/usr/local/bin/fish`, listed in `/etc/shells`, built by
-`build_tools/build_fleet.sh` (copy: `n1:/srv/xbuild/scratch/fish/fish`).
+and of root on n2: `/usr/local/bin/fish`, listed in `/etc/shells`.
+
+fish is a versioned infra component. To ship a new build:
+1. Build it with `build_tools/build_fleet.sh` on n1.
+2. Publish it with `bun run artifact publish fish <version> n1:<path>` (agentkit).
+3. Bump `[fish]` (version and sha256) in agentkit `deploy/versions.toml` and commit.
+4. Run `bun run infra apply n1 n2 n3`. `/usr/local/bin/fish` then links to `/opt/infra/fish/<version>/fish`.
+
+Never copy binaries to the hosts.
 
 ## Login shell for agents and CI
 
@@ -66,10 +73,11 @@ Differences from the old bash login shell:
   `RUSTUP_HOME`/`CARGO_HOME=/srv/toolchain/*` (nightly, intended) instead of `/opt/rust/*` (stable 1.100, legacy),
   and `CARGO_TARGET_DIR=/srv/build/target-shared`;
 - on n1, bun, cargo and sccache resolve through `/srv/toolchain/bin` (the same versions);
-- `env` from a fish-syntax and a bash-syntax one-liner is identical on n3. On n2 it differs only in
-  `VSSCRIPT_PATH`: vapoursynth's fish vendor file sets it, and its profile.d twin is not a source.
-  On n1, bash code also gets what ubuntu's `~/.bashrc` sets (`APHRODY_A2A_*`, `APHRODY_HOME`,
-  `APHRODY_HOST_ID`, `~/.local/bin`, `~/.bun/bin` on PATH): that is user config, which fish does not read;
+- `env` from a fish-syntax and a bash-syntax one-liner is identical, PATH order and values included, for ubuntu
+  on n1, n2 and n3 and for root on n2. Per user, `fleet fish-env` also writes what `~/.profile`,
+  `~/.config/aphrody/shell.sh` and `~/.bashrc` add. It goes to `~/.config/fish/conf.d/aphrody-user-env.fish` and
+  `~/.config/aphrody/env.sh` (mode 600: `~/.profile` exports tokens). The fallback sources that file before
+  `/etc/aphrody/env.sh`. The profile.d twins of fish vendor files (vapoursynth, perlbin) are system sources;
 - `su ubuntu -c '<fish string>'` from `/root` prints "Unable to open the current working directory", where bash prints nothing.
 
 ControlMaster connections that were already open keep the old shell until they reconnect.
