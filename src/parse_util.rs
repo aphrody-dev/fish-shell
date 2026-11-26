@@ -1175,6 +1175,14 @@ pub fn detect_parse_errors_in_ast(
                     issue.incomplete |= e.incomplete;
                 }
             }
+            // The value of `a=b cmd` is expanded like an argument.
+            Kind::VariableAssignment(varas) => {
+                let varas_src = varas.source(buff_src);
+                if let Err(e) = detect_errors_in_argument(varas, varas_src, &mut out_errors) {
+                    issue.error |= e.error;
+                    issue.incomplete |= e.incomplete;
+                }
+            }
             Kind::JobPipeline(job)
                 // Disallow background in the following cases:
                 //
@@ -1321,7 +1329,7 @@ macro_rules! append_syntax_error_formatted {
 /// substitutions, improperly escaped characters and improper use of the variable expansion
 /// operator.
 pub fn detect_errors_in_argument(
-    arg: &ast::Argument,
+    arg: &dyn Node,
     arg_src: &wstr,
     out_errors: &mut Option<&mut ParseErrorList>,
 ) -> Result<(), ParseIssue> {
@@ -1656,9 +1664,13 @@ fn detect_errors_in_decorated_statement(
         );
     }
 
-    // A bare `a=b` is an assignment, not a command, so its value may contain `(cmd)`.
+    // A bare `a=b` is an assignment, not a command: its value is checked like an argument, so it
+    // may contain `(cmd)`.
     let is_bare_assignment =
         dst.opt_decoration.is_none() && variable_assignment_equals_pos(com).is_some();
+    if is_bare_assignment && detect_errors_in_argument(&dst.command, com, parse_errors).is_err() {
+        errored = true;
+    }
     let unexp_command = com;
     if !unexp_command.is_empty() && !is_bare_assignment {
         // Check that we can expand the command.
