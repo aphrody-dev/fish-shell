@@ -48,6 +48,9 @@ $fish -c 'case x in x) echo case;; *) echo no;; esac'
 $fish -c 'set -euo pipefail; echo strict'
 # CHECK: strict
 
+$fish -c 'cat <(echo procsub)'
+# CHECK: procsub
+
 # Valid in both, with a wildcard: bash passes an unmatched one on, fish would fail.
 $fish -c 'rm -f /nonexistent-dir/*.tmp && echo rm-ok'
 # CHECK: rm-ok

@@ -62,6 +62,11 @@ pub fn is_posix_only(src: &wstr) -> bool {
     }
     Traversal::new(ast.top()).any(|node| match node.kind() {
         Kind::DecoratedStatement(stmt) => statement_is_posix_only(stmt, src),
+        // `<(cmd)` and `>(cmd)`: process substitution, an invalid redirection target in fish.
+        Kind::Redirection(redir) => redir
+            .target
+            .try_source(src)
+            .is_some_and(|t| t.starts_with('(')),
         _ => false,
     })
 }
@@ -149,6 +154,8 @@ mod tests {
             "set +x",
             "echo $((1 + 2))",
             "echo $#",
+            "diff <(ls /) <(ls /tmp)",
+            "tee >(wc -l) < f",
         ] {
             assert!(
                 is_posix_only(&WString::from_str(posix)),
