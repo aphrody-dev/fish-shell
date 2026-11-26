@@ -101,10 +101,15 @@ $fish --no-config .
 # CHECKERR: error: Unable to read input file: Is a directory
 # CHECKERR: warning: Error while reading file .
 
-$fish --no-config -c 'echo notprinted; echo foo; a=b'
+$fish --no-config -c 'echo notprinted; echo foo; : | a=b'
 # CHECKERR: fish: Unsupported use of '='. In fish, please use 'set a b'.
-# CHECKERR: {{^}}echo notprinted; echo foo; a=b
-# CHECKERR: {{^}}                           ^~^
+# CHECKERR: {{^}}echo notprinted; echo foo; : | a=b
+# CHECKERR: {{^}}                               ^~^
+
+# A bare POSIX assignment sets the variable, so ssh one-liners work.
+$fish --no-config -c 'G="x y"; echo $G; a=1 b=$a; echo $a $b'
+# CHECK: x y
+# CHECK: 1 1
 
 $fish --no-config -c 'echo notprinted | and true'
 # CHECKERR: fish: The 'and' command can not be used in a pipeline

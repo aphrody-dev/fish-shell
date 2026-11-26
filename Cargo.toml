@@ -100,6 +100,13 @@ xterm-color = "1.0.1"
 overflow-checks = true
 lto = true
 
+# Lean build for the build fleet: one codegen unit and no unwinding tables.
+# The panic hook in src/panic.rs runs before the abort, so crash reports are unchanged.
+[profile.fleet]
+inherits = "release"
+codegen-units = 1
+panic = "abort"
+
 [profile.release-with-debug]
 inherits = "release"
 debug = true

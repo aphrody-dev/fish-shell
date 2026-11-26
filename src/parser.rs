@@ -2145,7 +2145,9 @@ mod tests {
 
         validate!("true | and", ParseErrorCode::AndOrInPipeline);
 
-        validate!("a=", ParseErrorCode::BareVariableAssignment);
+        validate!("true | a=b", ParseErrorCode::BareVariableAssignment);
+        validate!("not a=b", ParseErrorCode::BareVariableAssignment);
+        validate!("a=b >/dev/null", ParseErrorCode::BareVariableAssignment);
     }
 
     #[test]

@@ -1773,6 +1773,11 @@ struct Populator<'a> {
     /// If set, we have encountered an error.
     any_error: bool,
 
+    /// If set, the next statement is the head of a job, where a POSIX-style `a=b` without a
+    /// command sets the variable. Cleared once that statement is parsed, so pipeline tails and
+    /// `not` contents do not get it.
+    bare_assignment_ok: bool,
+
     /// The number of parent links of the node we are visiting
     depth: usize,
 
@@ -1798,7 +1803,10 @@ impl<'s> NodeVisitorMut for Populator<'s> {
             KM::BlockStatementHeader(node) => self.visit_block_statement_header(node),
             KM::Statement(node) => self.visit_statement(node),
             KM::Redirection(node) => node.accept_mut(self),
-            KM::JobPipeline(node) => node.accept_mut(self),
+            KM::JobPipeline(node) => {
+                self.bare_assignment_ok = true;
+                node.accept_mut(self)
+            }
             KM::JobConjunction(node) => node.accept_mut(self),
             KM::ForHeader(node) => node.accept_mut(self),
             KM::WhileHeader(node) => node.accept_mut(self),
@@ -1986,6 +1994,7 @@ impl<'s> Populator<'s> {
             freestanding_arguments,
             unwinding: false,
             any_error: false,
+            bare_assignment_ok: false,
             depth: 0,
             out_errors,
         }
@@ -2445,6 +2454,8 @@ impl<'s> Populator<'s> {
             Statement::Decorated(embedded)
         }
 
+        let bare_assignment_ok = std::mem::take(&mut self.bare_assignment_ok);
+
         if self.peek_token(0).typ == ParseTokenType::Terminate && self.allow_incomplete() {
             // This may happen if we just have a 'time' prefix.
             // Construct a decorated statement, which will be unsourced.
@@ -2463,6 +2474,19 @@ impl<'s> Populator<'s> {
                 self.peek_token(0).user_presentable_description()
             );
             return got_error(self);
+        } else if self.peek_token(0).may_be_variable_assignment
+            && bare_assignment_ok
+            && matches!(
+                self.peek_type(1),
+                ParseTokenType::End
+                    | ParseTokenType::AndAnd
+                    | ParseTokenType::OrOr
+                    | ParseTokenType::Terminate
+            )
+        {
+            // A job that is only `a=b`: parse it as a statement whose command is the assignment,
+            // which the executor runs as `set a b`.
+            return new_decorated_statement(self);
         } else if self.peek_token(0).may_be_variable_assignment {
             // Here we have a variable assignment which we chose to not parse as a variable
             // assignment because there was no string after it.
