@@ -84,11 +84,42 @@ alias envxalias='a=b x'
 complete -C'a=b envxalias '
 # CHECK: arg
 
+# A job of only assignments sets them like `set`, left to right.
+a=(echo b)
+# CHECK: b
+echo $a
+a=1 b={$a}2
+# CHECK: 1 12
+echo $a $b
+a=
+# CHECK: 1 ''
+echo (count $a) "'$a'"
+false; a=$status
+# CHECK: 1 0
+echo $a $status
+a=(false)
+# CHECK: 1
+echo $status
+a=c && echo and $a
+# CHECK: and c
+function bare_local
+    bare_x=inner
+    echo $bare_x
+end
+# CHECK: inner
+bare_local
+# CHECK: nil
+set -q bare_x; or echo nil
+set -gx bare_exported old
+bare_exported=new
+# CHECK: new
+sh -c 'echo $bare_exported'
+set -e a b bare_exported
+status=1
+# CHECK: status 1
+echo status $status
+
 # Eval invalid grammar to allow fish to parse this file
-eval 'a=(echo b)'
-# CHECKERR: {{.*}}: Unsupported use of '='. In fish, please use 'set a (echo b)'.
-# CHECKERR: {{^}}a=(echo b)
-# CHECKERR: {{^}}^~~~~~~~~^
 eval ': | a=b'
 # CHECKERR: {{.*}}: Unsupported use of '='. In fish, please use 'set a b'.
 # CHECKERR: {{^}}: | a=b
