@@ -607,10 +607,11 @@ impl ExecutionContext {
         }
         *block = Some(ctx.parser().push_block(Block::variable_assignment_block()));
         for variable_assignment in variable_assignment_list {
-            let (variable_name, vals) = match self.expand_variable_assignment(ctx, variable_assignment) {
-                Ok(assignment) => assignment,
-                Err(reason) => return reason,
-            };
+            let (variable_name, vals) =
+                match self.expand_variable_assignment(ctx, variable_assignment) {
+                    Ok(assignment) => assignment,
+                    Err(reason) => return reason,
+                };
             if let Some(proc) = &mut proc {
                 proc.variable_assignments.push(ConcreteAssignment::new(
                     variable_name.to_owned(),
@@ -650,10 +651,7 @@ impl ExecutionContext {
             ctx,
             Some(&mut errors),
         );
-        parse_error_offset_source_start(
-            &mut errors,
-            node.range().unwrap().start() + equals_pos + 1,
-        );
+        parse_error_offset_source_start(&mut errors, node.source_range().start() + equals_pos + 1);
         match expand_ret.result {
             ExpandResultCode::Error|ExpandResultCode::Overflow => {
                 return Err(self.report_errors(ctx, expand_ret.status, &errors));

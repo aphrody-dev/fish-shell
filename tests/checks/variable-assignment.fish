@@ -115,7 +115,8 @@ bare_exported=new
 # CHECK: new
 sh -c 'echo $bare_exported'
 set -e a b bare_exported
-status=1
+status=2
+# CHECKERR: fish: Tried to change the read-only variable 'status'
 # CHECK: status 1
 echo status $status
 

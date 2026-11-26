@@ -91,7 +91,7 @@ or a mixture of literal values and output::
   8
   9
 
-A ``=`` is unnecessary and unhelpful with ``set`` - ``set foo = bar`` will set the variable "foo" to two values: "=" and "bar". ``set foo=bar`` will print an error.
+A ``=`` is unnecessary and unhelpful with ``set`` - ``set foo = bar`` will set the variable "foo" to two values: "=" and "bar". ``set foo=bar`` will print an error. A bash-style ``foo=bar`` on its own works and is the same as ``set foo bar``.
 
 See :ref:`Shell variables <variables>` for more.
 
