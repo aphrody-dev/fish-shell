@@ -28,6 +28,12 @@ $fish -c 'case x in x) echo case;; *) echo no;; esac'
 $fish -c 'set -euo pipefail; echo strict'
 # CHECK: strict
 
+# Valid in both, with a wildcard: bash passes an unmatched one on, fish would fail.
+$fish -c 'rm -f /nonexistent-dir/*.tmp && echo rm-ok'
+# CHECK: rm-ok
+$fish -c 'for f in /*; set -q f; and echo fish-glob; break; end'
+# CHECK: fish-glob
+
 # Positional arguments and the exit status carry over.
 $fish -c '[[ -n $1 ]] && echo "$0 $1 $2"; exit 3' one two
 # CHECK: bash one two

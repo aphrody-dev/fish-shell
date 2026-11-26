@@ -200,11 +200,6 @@ fn exec_posix_shell_if_posix(opts: &FishCmdOpts, args: &[WString]) {
         return;
     }
     let script = opts.batch_cmds.join(OsStr::new("\n"));
-    if mode == posix_fallback::Mode::NotFish
-        && !posix_fallback::is_posix_only(&osstr2wcstring(&script))
-    {
-        return;
-    }
     let shell = env::var_os("FISH_POSIX_SHELL").unwrap_or_else(|| "/bin/bash".into());
     let name = Path::new(&shell)
         .file_name()
@@ -213,6 +208,25 @@ fn exec_posix_shell_if_posix(opts: &FishCmdOpts, args: &[WString]) {
     // Never hand the string back to fish, which would exec again.
     if name.as_bytes().starts_with(b"fish") {
         return;
+    }
+    if mode == posix_fallback::Mode::NotFish {
+        let src = osstr2wcstring(&script);
+        // Valid in both shells, but a wildcard that matches nothing fails the command in fish
+        // only: let the POSIX shell run it if it parses there.
+        let posix = posix_fallback::is_posix_only(&src)
+            || posix_fallback::has_unquoted_wildcard(&src)
+                && std::process::Command::new(&shell)
+                    .arg("-n")
+                    .arg("-c")
+                    .arg(&script)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .is_ok_and(|s| s.success());
+        if !posix {
+            return;
+        }
     }
     let mut command = std::process::Command::new(&shell);
     command.arg0(&name);

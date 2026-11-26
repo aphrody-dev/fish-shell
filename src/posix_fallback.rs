@@ -66,6 +66,33 @@ pub fn is_posix_only(src: &wstr) -> bool {
     })
 }
 
+/// Whether an argument of `src` has a `*` outside quotes. fish fails a command whose wildcard
+/// matches nothing, where POSIX shells pass the word on: `rm -f *.tmp && …` stops in fish.
+pub fn has_unquoted_wildcard(src: &wstr) -> bool {
+    let ast = ast::parse(src, ParseTreeFlags::default(), None);
+    Traversal::new(ast.top()).any(|node| match node.kind() {
+        Kind::Argument(arg) => arg.try_source(src).is_some_and(word_has_unquoted_star),
+        _ => false,
+    })
+}
+
+fn word_has_unquoted_star(word: &wstr) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    for c in word.chars() {
+        match (quote, c) {
+            _ if escaped => escaped = false,
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('\''), _) => {}
+            (_, '\\') => escaped = true,
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '*') => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn statement_is_posix_only(stmt: &ast::DecoratedStatement, src: &wstr) -> bool {
     if stmt.opt_decoration.is_some() {
         return false;
@@ -147,6 +174,24 @@ mod tests {
             assert!(
                 !is_posix_only(&WString::from_str(fish)),
                 "should be fish: {fish}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unquoted_wildcard() {
+        test_init();
+        for (src, star) in [
+            ("rm -f *.tmp && echo ok", true),
+            ("ls /tmp/x-*.log", true),
+            ("echo '*' \"a*b\" \\*", false),
+            ("echo hi", false),
+            ("for f in *.rs; echo $f; end", true),
+        ] {
+            assert_eq!(
+                super::has_unquoted_wildcard(&WString::from_str(src)),
+                star,
+                "{src}"
             );
         }
     }
