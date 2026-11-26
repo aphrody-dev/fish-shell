@@ -14,6 +14,8 @@ set -e
 target=x86_64-unknown-linux-gnu
 out=${1:-target/fleet-fish}
 
+# build.rs computes the version from git but has no rerun-if-changed for it.
+touch build.rs
 RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-C target-cpu=x86-64-v3 -C relocation-model=static" \
     cargo build --locked --target "$target" --profile fleet --no-default-features --bin fish
 
