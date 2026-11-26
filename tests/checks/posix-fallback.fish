@@ -1,4 +1,4 @@
-#RUN: %fish %s
+#RUN: fish=%fish %fish %s
 #REQUIRES: test -x /bin/bash
 
 # `fish -c` runs POSIX shell code with $FISH_POSIX_SHELL (default /bin/bash).
@@ -56,8 +56,8 @@ FISH_POSIX_FALLBACK=always $fish -c 'echo ${BASH_VERSION:+always}'
 # 0 turns it off: fish reports the error.
 FISH_POSIX_FALLBACK=0 $fish -c 'echo ${x}'
 # CHECKERR: fish: Variables cannot be bracketed. In fish, please use {$x}.
-# CHECKERR: echo ${x}
-# CHECKERR: ^
+# CHECKERR: {{^}}echo ${x}
+# CHECKERR: {{^}}      ^
 
 # Interactive sessions never fall back.
 $fish -i -c 'echo ${x}' 2>&1 | string match -q '*Variables cannot be bracketed*'
