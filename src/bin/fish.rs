@@ -38,9 +38,9 @@ use fish::{
     parse_constants::{ParseErrorList, ParseTreeFlags},
     parse_tree::ParsedSource,
     parse_util::detect_parse_errors_in_ast,
-    posix_fallback,
     parser::{BlockType, CancelBehavior, Parser, ParserEnvSetMode},
     path::{ValidatedPath, path_get_config},
+    posix_fallback,
     prelude::*,
     printf,
     proc::{
@@ -206,7 +206,10 @@ fn exec_posix_shell_if_posix(opts: &FishCmdOpts, args: &[WString]) {
         return;
     }
     let shell = env::var_os("FISH_POSIX_SHELL").unwrap_or_else(|| "/bin/bash".into());
-    let name = Path::new(&shell).file_name().unwrap_or(shell.as_os_str()).to_owned();
+    let name = Path::new(&shell)
+        .file_name()
+        .unwrap_or(shell.as_os_str())
+        .to_owned();
     // Never hand the string back to fish, which would exec again.
     if name.as_bytes().starts_with(b"fish") {
         return;
@@ -527,7 +530,13 @@ fn throwing_main() -> i32 {
     // Construct the root parser!
     let env = EnvStack::globals().create_child(true /* dispatches_var_changes */);
     let parser = &mut Parser::new(env, CancelBehavior::Clear);
-    parser.set_syncs_uvars(!opts.no_config);
+    // Universal variables are read at startup. Only interactive sessions write them back, so
+    // scripts, CI steps and ssh one-liners leave fish_variables alone; FISH_SAVE_UVARS=1 lets them.
+    parser.set_syncs_uvars(
+        !opts.no_config
+            && (is_interactive_session()
+                || env::var_os("FISH_SAVE_UVARS").is_some_and(|v| v == "1")),
+    );
 
     if !opts.no_exec && !opts.no_config {
         read_init(parser, config_paths.as_ref().unwrap());

@@ -8,7 +8,7 @@
 //! POSIX shell, and anything else (or unset) does so only for strings that are not fish.
 
 use crate::{
-    ast::{self, Kind, Traversal},
+    ast::{self, Kind, Node as _, Traversal},
     parse_constants::ParseTreeFlags,
     parse_util::detect_parse_errors_in_ast,
     prelude::*,
@@ -17,8 +17,23 @@ use crate::{
 /// Commands that exist in POSIX shells but not in fish, so fish could only fail on a job that
 /// runs them.
 const POSIX_ONLY_COMMANDS: &[&str] = &[
-    "[[", "compgen", "declare", "done", "esac", "fi", "getopts", "let", "local", "mapfile",
-    "readarray", "readonly", "select", "shopt", "then", "typeset", "unset", "until",
+    "compgen",
+    "declare",
+    "done",
+    "esac",
+    "fi",
+    "getopts",
+    "let",
+    "local",
+    "mapfile",
+    "readarray",
+    "readonly",
+    "select",
+    "shopt",
+    "then",
+    "typeset",
+    "unset",
+    "until",
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +73,8 @@ fn statement_is_posix_only(stmt: &ast::DecoratedStatement, src: &wstr) -> bool {
     let Some(command) = stmt.command.try_source(src) else {
         return false;
     };
-    if POSIX_ONLY_COMMANDS.iter().any(|c| command == *c) {
+    // fish reads `[[ -n $x ]]` as one token.
+    if command.starts_with("[[") || POSIX_ONLY_COMMANDS.iter().any(|c| command == *c) {
         return true;
     }
     if command != "set" {
@@ -73,8 +89,9 @@ fn statement_is_posix_only(stmt: &ast::DecoratedStatement, src: &wstr) -> bool {
     // fish's `set` has no `-o`, takes no `+` options, and needs a name after its flags.
     // `set -e`, `set -euo pipefail` and `set +x` are bash.
     let is_option = |a: &&wstr| (a.starts_with('-') || a.starts_with('+')) && *a != "--";
-    let is_bash_short_option =
-        |a: &&wstr| a.starts_with('+') || (!a.starts_with("--") && a.starts_with('-') && a.contains('o'));
+    let is_bash_short_option = |a: &&wstr| {
+        a.starts_with('+') || (!a.starts_with("--") && a.starts_with('-') && a.contains('o'))
+    };
     !args.is_empty() && (args.iter().all(is_option) || args.iter().any(is_bash_short_option))
 }
 
@@ -106,7 +123,10 @@ mod tests {
             "echo $((1 + 2))",
             "echo $#",
         ] {
-            assert!(is_posix_only(&WString::from_str(posix)), "should be POSIX: {posix}");
+            assert!(
+                is_posix_only(&WString::from_str(posix)),
+                "should be POSIX: {posix}"
+            );
         }
         for fish in [
             "echo hi",
@@ -124,7 +144,10 @@ mod tests {
             "cd /tmp && FOO=1 env",
             "set",
         ] {
-            assert!(!is_posix_only(&WString::from_str(fish)), "should be fish: {fish}");
+            assert!(
+                !is_posix_only(&WString::from_str(fish)),
+                "should be fish: {fish}"
+            );
         }
     }
 
