@@ -3,6 +3,21 @@
 
 # `fish -c` runs POSIX shell code with $FISH_POSIX_SHELL (default /bin/bash).
 set -gx FISH_POSIX_FALLBACK 1
+# No environment file unless a test sets one (the default is /etc/aphrody/env.sh).
+set -gx FISH_POSIX_ENV ''
+
+# The POSIX shell first sources $FISH_POSIX_ENV, the environment fish's config would give.
+echo 'export FLEET_VAR=from-env-file' >env.sh
+FISH_POSIX_ENV=$PWD/env.sh $fish -c 'for i in 1; do echo "$FLEET_VAR line $LINENO"; done'
+# CHECK: from-env-file line 1
+
+# With no command and stdin not a terminal, stdin goes to the POSIX shell too...
+printf '%s\n' 'for f in x; do echo "stdin $f"; done' 'echo "${FLEET_VAR:-unset}"' | FISH_POSIX_ENV=$PWD/env.sh $fish
+# CHECK: stdin x
+# CHECK: from-env-file
+# ...unless it starts with a fish shebang.
+printf '%s\n' '#!/usr/bin/env fish' 'for f in y; echo fish $f; end' | $fish
+# CHECK: fish y
 
 $fish -c 'for f in a b; do echo "loop $f"; done'
 # CHECK: loop a

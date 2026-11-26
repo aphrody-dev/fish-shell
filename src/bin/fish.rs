@@ -185,30 +185,109 @@ fn read_init(parser: &mut Parser, paths: &ConfigPaths) {
     }
 }
 
-/// Replace this process with `$FISH_POSIX_SHELL -c` when the `-c` commands are POSIX shell code
-/// (see `fish::posix_fallback`). Same environment, working directory, and positional arguments.
-/// Returns only if the commands are fish or the exec failed.
-fn exec_posix_shell_if_posix(opts: &FishCmdOpts, args: &[WString]) {
-    use std::os::unix::process::CommandExt as _;
+/// The POSIX shell to hand code to, and its name, unless the fallback is off or would be fish.
+fn posix_shell(opts: &FishCmdOpts) -> Option<(posix_fallback::Mode, OsString, OsString)> {
     let mode = posix_fallback::Mode::from_env(env::var_os("FISH_POSIX_FALLBACK").as_deref());
     if mode == posix_fallback::Mode::Off
         || opts.is_interactive_session
         || opts.no_exec
         || !opts.postconfig_cmds.is_empty()
-        || opts.batch_cmds.is_empty()
     {
-        return;
+        return None;
     }
-    let script = opts.batch_cmds.join(OsStr::new("\n"));
     let shell = env::var_os("FISH_POSIX_SHELL").unwrap_or_else(|| "/bin/bash".into());
     let name = Path::new(&shell)
         .file_name()
         .unwrap_or(shell.as_os_str())
         .to_owned();
-    // Never hand the string back to fish, which would exec again.
-    if name.as_bytes().starts_with(b"fish") {
+    // Never hand the code back to fish, which would exec again.
+    (!name.as_bytes().starts_with(b"fish")).then_some((mode, shell, name))
+}
+
+/// `. '<file>'; `: what code handed to the POSIX shell runs first, so it sees the environment
+/// that fish's config gives fish (`$FISH_POSIX_ENV`, default /etc/aphrody/env.sh; empty: none).
+/// It goes on the first line so line numbers do not move. BASH_ENV would not do: bash skips it
+/// when run by sshd.
+fn posix_env_prefix() -> Vec<u8> {
+    let path = env::var_os("FISH_POSIX_ENV").unwrap_or_else(|| "/etc/aphrody/env.sh".into());
+    if path.is_empty() || nix::unistd::access(Path::new(&path), AccessFlags::R_OK).is_err() {
+        return vec![];
+    }
+    let quoted = path
+        .as_bytes()
+        .split(|&b| b == b'\'')
+        .collect::<Vec<_>>()
+        .join(&b"'\\''"[..]);
+    [&b". '"[..], &quoted, b"'; "].concat()
+}
+
+fn exec_failed(shell: &OsStr, err: std::io::Error) {
+    flogf!(
+        warning,
+        "Could not run POSIX shell %s: %s",
+        shell.to_string_lossy().into_owned(),
+        err.to_string()
+    );
+}
+
+/// With no command, no script file, and stdin not a terminal (`ssh host < script.sh`), fish reads
+/// its script from stdin. Unless the script starts with a fish shebang, hand it to the POSIX
+/// shell instead. Returns only if fish runs it; stdin then holds the same bytes.
+fn exec_posix_shell_for_stdin(opts: &FishCmdOpts, has_script_file: bool) {
+    use std::io::{Read as _, Seek as _, Write as _};
+    use std::os::unix::process::CommandExt as _;
+    if !opts.batch_cmds.is_empty() || has_script_file || isatty(STDIN_FILENO) {
         return;
     }
+    let Some((_, shell, name)) = posix_shell(opts) else {
+        return;
+    };
+    let mut script = vec![];
+    // SAFETY: fd 0 stays open; ManuallyDrop keeps File from closing it.
+    let mut stdin = std::mem::ManuallyDrop::new(unsafe { File::from_raw_fd(STDIN_FILENO) });
+    if stdin.read_to_end(&mut script).is_err() {
+        return;
+    }
+    let first_line = script.split(|&b| b == b'\n').next().unwrap_or_default();
+    let is_fish = first_line.starts_with(b"#!") && first_line.windows(4).any(|w| w == b"fish");
+    let replace_stdin = |bytes: &[u8]| -> std::io::Result<()> {
+        let fd = nix::sys::memfd::memfd_create(c"fish-stdin", nix::sys::memfd::MFdFlags::empty())?;
+        let mut file = File::from(fd);
+        file.write_all(bytes)?;
+        file.rewind()?;
+        nix::unistd::dup2_stdin(&file)?;
+        Ok(())
+    };
+    if is_fish {
+        if let Err(err) = replace_stdin(&script) {
+            flogf!(warning, "Could not buffer stdin: %s", err.to_string());
+        }
+        return;
+    }
+    if let Err(err) = replace_stdin(&[posix_env_prefix(), script].concat()) {
+        flogf!(warning, "Could not buffer stdin: %s", err.to_string());
+        return;
+    }
+    let mut command = std::process::Command::new(&shell);
+    command.arg0(&name);
+    if opts.is_login {
+        command.arg("-l");
+    }
+    exec_failed(&shell, command.exec());
+}
+
+/// Replace this process with `$FISH_POSIX_SHELL -c` when the `-c` commands are POSIX shell code
+/// (see `fish::posix_fallback`). Same environment, working directory, and positional arguments.
+/// Returns only if the commands are fish or the exec failed.
+fn exec_posix_shell_if_posix(opts: &FishCmdOpts, args: &[WString]) {
+    use std::os::unix::process::CommandExt as _;
+    if opts.batch_cmds.is_empty() {
+        return;
+    }
+    let Some((mode, shell, name)) = posix_shell(opts) else {
+        return;
+    };
+    let script = opts.batch_cmds.join(OsStr::new("\n"));
     if mode == posix_fallback::Mode::NotFish {
         let src = osstr2wcstring(&script);
         // Valid in both shells, but a wildcard that matches nothing fails the command in fish
@@ -233,18 +312,13 @@ fn exec_posix_shell_if_posix(opts: &FishCmdOpts, args: &[WString]) {
     if opts.is_login {
         command.arg("-l");
     }
+    let script = OsString::from_vec([posix_env_prefix(), script.into_vec()].concat());
     command.arg("-c").arg(script);
     if !args.is_empty() {
         command.arg(&name);
         command.args(args.iter().map(|a| OsString::from_vec(wcs2bytes(a))));
     }
-    let err = command.exec();
-    flogf!(
-        warning,
-        "Could not run POSIX shell %s: %s",
-        shell.to_string_lossy().into_owned(),
-        err.to_string()
-    );
+    exec_failed(&shell, command.exec());
 }
 
 fn run_command_list(parser: &mut Parser, cmds: &[OsString]) -> Result<(), libc::c_int> {
@@ -461,6 +535,7 @@ fn throwing_main() -> i32 {
 
     // Before any setup: a bash one-liner from sshd or CI runs in bash, not in a fish with config.
     exec_posix_shell_if_posix(&opts, &args[my_optind..]);
+    exec_posix_shell_for_stdin(&opts, my_optind < args.len());
 
     // Direct any debug output right away.
     // --debug-output takes precedence, otherwise $FISH_DEBUG_OUTPUT is used.
