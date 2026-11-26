@@ -38,6 +38,7 @@ use fish::{
     parse_constants::{ParseErrorList, ParseTreeFlags},
     parse_tree::ParsedSource,
     parse_util::detect_parse_errors_in_ast,
+    posix_fallback,
     parser::{BlockType, CancelBehavior, Parser, ParserEnvSetMode},
     path::{ValidatedPath, path_get_config},
     prelude::*,
@@ -182,6 +183,51 @@ fn read_init(parser: &mut Parser, paths: &ConfigPaths) {
     if ok {
         source_config_in_directory(parser, path);
     }
+}
+
+/// Replace this process with `$FISH_POSIX_SHELL -c` when the `-c` commands are POSIX shell code
+/// (see `fish::posix_fallback`). Same environment, working directory, and positional arguments.
+/// Returns only if the commands are fish or the exec failed.
+fn exec_posix_shell_if_posix(opts: &FishCmdOpts, args: &[WString]) {
+    use std::os::unix::process::CommandExt as _;
+    let mode = posix_fallback::Mode::from_env(env::var_os("FISH_POSIX_FALLBACK").as_deref());
+    if mode == posix_fallback::Mode::Off
+        || opts.is_interactive_session
+        || opts.no_exec
+        || !opts.postconfig_cmds.is_empty()
+        || opts.batch_cmds.is_empty()
+    {
+        return;
+    }
+    let script = opts.batch_cmds.join(OsStr::new("\n"));
+    if mode == posix_fallback::Mode::NotFish
+        && !posix_fallback::is_posix_only(&osstr2wcstring(&script))
+    {
+        return;
+    }
+    let shell = env::var_os("FISH_POSIX_SHELL").unwrap_or_else(|| "/bin/bash".into());
+    let name = Path::new(&shell).file_name().unwrap_or(shell.as_os_str()).to_owned();
+    // Never hand the string back to fish, which would exec again.
+    if name.as_bytes().starts_with(b"fish") {
+        return;
+    }
+    let mut command = std::process::Command::new(&shell);
+    command.arg0(&name);
+    if opts.is_login {
+        command.arg("-l");
+    }
+    command.arg("-c").arg(script);
+    if !args.is_empty() {
+        command.arg(&name);
+        command.args(args.iter().map(|a| OsString::from_vec(wcs2bytes(a))));
+    }
+    let err = command.exec();
+    flogf!(
+        warning,
+        "Could not run POSIX shell %s: %s",
+        shell.to_string_lossy().into_owned(),
+        err.to_string()
+    );
 }
 
 fn run_command_list(parser: &mut Parser, cmds: &[OsString]) -> Result<(), libc::c_int> {
@@ -395,6 +441,9 @@ fn throwing_main() -> i32 {
         ControlFlow::Continue(optind) => optind,
         ControlFlow::Break(status) => return status,
     };
+
+    // Before any setup: a bash one-liner from sshd or CI runs in bash, not in a fish with config.
+    exec_posix_shell_if_posix(&opts, &args[my_optind..]);
 
     // Direct any debug output right away.
     // --debug-output takes precedence, otherwise $FISH_DEBUG_OUTPUT is used.
