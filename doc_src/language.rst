@@ -1311,6 +1311,15 @@ Unlike other shells, this does *not* inhibit any lookup (aliases or similar). Ca
 
 This syntax is supported since fish 3.1.
 
+A job made only of "var=val" words, with no command, sets the variables like :doc:`set <cmds/set>` without options, from left to right::
+
+  G=somerepo; echo $G
+  # same as `set G somerepo`
+  a=1 b=$a
+  # same as `set a 1; set b $a`
+
+As in other shells, ``$status`` is then that of the last command substitution, or 0. The assignment must stand alone: ``a=b | cat``, ``not a=b`` or ``a=b >file`` are errors.
+
 .. _variables-universal:
 
 Universal Variables

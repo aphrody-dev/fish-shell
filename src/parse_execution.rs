@@ -607,58 +607,135 @@ impl ExecutionContext {
         }
         *block = Some(ctx.parser().push_block(Block::variable_assignment_block()));
         for variable_assignment in variable_assignment_list {
-            let source = self.node_source(variable_assignment);
-            let equals_pos = variable_assignment_equals_pos(source).unwrap();
-            let variable_name = &source[..equals_pos];
-            let expression = &source[equals_pos + 1..];
-            let mut expression_expanded = vec![];
-            let mut errors = ParseErrorList::new();
-            // TODO this is mostly copied from expand_arguments_from_nodes, maybe extract to function
-            let expand_ret = expand_string(
-                expression.to_owned(),
-                &mut expression_expanded,
-                ExpandFlags::default(),
-                ctx,
-                Some(&mut errors),
-            );
-            parse_error_offset_source_start(
-                &mut errors,
-                variable_assignment.range().unwrap().start() + equals_pos + 1,
-            );
-            match expand_ret.result {
-                ExpandResultCode::Error|ExpandResultCode::Overflow => {
-                    return self.report_errors(ctx, expand_ret.status, &errors);
-                }
-                ExpandResultCode::Cancel => {
-                    return EndExecutionReason::Cancelled;
-                }
-                ExpandResultCode::WildcardNoMatch // nullglob (equivalent to set)
-                    | ExpandResultCode::Ok => {}
-            }
-            let vals: Vec<_> = expression_expanded
-                .into_iter()
-                .map(|comp| comp.completion)
-                .collect();
+            let (variable_name, vals) =
+                match self.expand_variable_assignment(ctx, variable_assignment) {
+                    Ok(assignment) => assignment,
+                    Err(reason) => return reason,
+                };
             if let Some(proc) = &mut proc {
                 proc.variable_assignments.push(ConcreteAssignment::new(
                     variable_name.to_owned(),
                     vals.clone(),
                 ));
             }
-            let set_result = ctx.parser().set_var_and_fire(
+            let result = self.set_assigned_variable(
+                ctx,
                 variable_name,
                 ParserEnvSetMode::new(EnvMode::LOCAL_EXPORTED),
                 vals,
             );
-            // TODO Do we really want to create `IoStreams` here?
-            let mut outs = OutputStream::Fd(FdOutputStream::new(STDOUT_FILENO));
-            let mut errs = OutputStream::Fd(FdOutputStream::new(STDERR_FILENO));
-            let mut streams = IoStreams::new(&mut outs, &mut errs, &self.block_io);
-            handle_env_return(set_result, get_program_name(), variable_name, &mut streams);
-            if set_result != EnvStackSetResult::Ok {
-                return EndExecutionReason::Error;
+            if result != EndExecutionReason::Ok {
+                return result;
             }
         }
+        EndExecutionReason::Ok
+    }
+
+    /// Split a `name=value` node into the name and the expanded value.
+    fn expand_variable_assignment<'b>(
+        &'b self,
+        ctx: &mut OperationContext<'_>,
+        node: &dyn ast::Node,
+    ) -> Result<(&'b wstr, Vec<WString>), EndExecutionReason> {
+        let source = self.node_source(node);
+        let equals_pos = variable_assignment_equals_pos(source).unwrap();
+        let variable_name = &source[..equals_pos];
+        let expression = &source[equals_pos + 1..];
+        let mut expression_expanded = vec![];
+        let mut errors = ParseErrorList::new();
+        // TODO this is mostly copied from expand_arguments_from_nodes, maybe extract to function
+        let expand_ret = expand_string(
+            expression.to_owned(),
+            &mut expression_expanded,
+            ExpandFlags::default(),
+            ctx,
+            Some(&mut errors),
+        );
+        parse_error_offset_source_start(&mut errors, node.source_range().start() + equals_pos + 1);
+        match expand_ret.result {
+            ExpandResultCode::Error|ExpandResultCode::Overflow => {
+                return Err(self.report_errors(ctx, expand_ret.status, &errors));
+            }
+            ExpandResultCode::Cancel => {
+                return Err(EndExecutionReason::Cancelled);
+            }
+            ExpandResultCode::WildcardNoMatch // nullglob (equivalent to set)
+                | ExpandResultCode::Ok => {}
+        }
+        let vals = expression_expanded
+            .into_iter()
+            .map(|comp| comp.completion)
+            .collect();
+        Ok((variable_name, vals))
+    }
+
+    fn set_assigned_variable(
+        &self,
+        ctx: &mut OperationContext<'_>,
+        variable_name: &wstr,
+        mode: ParserEnvSetMode,
+        vals: Vec<WString>,
+    ) -> EndExecutionReason {
+        let set_result = ctx.parser().set_var_and_fire(variable_name, mode, vals);
+        // TODO Do we really want to create `IoStreams` here?
+        let mut outs = OutputStream::Fd(FdOutputStream::new(STDOUT_FILENO));
+        let mut errs = OutputStream::Fd(FdOutputStream::new(STDERR_FILENO));
+        let mut streams = IoStreams::new(&mut outs, &mut errs, &self.block_io);
+        handle_env_return(set_result, get_program_name(), variable_name, &mut streams);
+        if set_result != EnvStackSetResult::Ok {
+            return EndExecutionReason::Error;
+        }
+        EndExecutionReason::Ok
+    }
+
+    /// If this job is only POSIX-style assignments like `a=b c=d`, return its statement.
+    fn job_is_bare_assignment<'b>(
+        &self,
+        job: &'b ast::JobPipeline,
+    ) -> Option<&'b ast::DecoratedStatement> {
+        let Statement::Decorated(stmt) = &job.statement else {
+            return None;
+        };
+        let is_bare = job.continuation.is_empty()
+            && job.bg.is_none()
+            && stmt.opt_decoration.is_none()
+            && stmt.args_or_redirs.is_empty()
+            && variable_assignment_equals_pos(self.node_source(&stmt.command)).is_some();
+        is_bare.then_some(stmt)
+    }
+
+    /// Run `a=b c=d` like `set a b; set c d`, left to right, in the current scope.
+    /// $status is that of the last command substitution, or 0 if there was none.
+    fn run_bare_assignments(
+        &mut self,
+        ctx: &mut OperationContext<'_>,
+        job: &ast::JobPipeline,
+        stmt: &ast::DecoratedStatement,
+    ) -> EndExecutionReason {
+        let status_count = ctx.parser().libdata().status_count;
+        let nodes = job
+            .variables
+            .iter()
+            .map(|varas| varas as &dyn ast::Node)
+            .chain(std::iter::once(&stmt.command as &dyn ast::Node));
+        for node in nodes {
+            let (variable_name, vals) = match self.expand_variable_assignment(ctx, node) {
+                Ok(assignment) => assignment,
+                Err(reason) => return reason,
+            };
+            let mode = ParserEnvSetMode::user(EnvMode::default());
+            let result = self.set_assigned_variable(ctx, variable_name, mode, vals);
+            if result != EndExecutionReason::Ok {
+                ctx.parser()
+                    .set_last_statuses(Statuses::just(STATUS_CMD_ERROR));
+                return result;
+            }
+        }
+        let parser = ctx.parser();
+        if parser.libdata().status_count == status_count {
+            parser.set_last_statuses(Statuses::just(STATUS_CMD_OK));
+        }
+        parser.libdata_mut().status_count += 1;
         EndExecutionReason::Ok
     }
 
@@ -1606,6 +1683,12 @@ impl ExecutionContext {
             }
             wants_timing.then(push_timer)
         };
+
+        if let Some(stmt) = self.job_is_bare_assignment(job_node) {
+            let result = self.run_bare_assignments(ctx, job_node, stmt);
+            finalize_profile_item(ctx, self.node_source_owned(job_node), false);
+            return result;
+        }
 
         // When we encounter a block construct (e.g. while loop) in the general case, we create a "block
         // process" containing its node. This allows us to handle block-level redirections.

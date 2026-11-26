@@ -17,7 +17,10 @@ use crate::{
         StatementDecoration, UNKNOWN_BUILTIN_ERR_MSG, parse_error_offset_source_start,
     },
     prelude::*,
-    tokenizer::{Tok, TokFlags, TokenType, Tokenizer, comment_end, is_token_delimiter, quote_end},
+    tokenizer::{
+        Tok, TokFlags, TokenType, Tokenizer, comment_end, is_token_delimiter, quote_end,
+        variable_assignment_equals_pos,
+    },
 };
 use fish_common::{UnescapeFlags, UnescapeStringStyle, help_section, unescape_string};
 use fish_feature_flags::{FeatureFlag, feature_test};
@@ -1653,8 +1656,11 @@ fn detect_errors_in_decorated_statement(
         );
     }
 
+    // A bare `a=b` is an assignment, not a command, so its value may contain `(cmd)`.
+    let is_bare_assignment =
+        dst.opt_decoration.is_none() && variable_assignment_equals_pos(com).is_some();
     let unexp_command = com;
-    if !unexp_command.is_empty() {
+    if !unexp_command.is_empty() && !is_bare_assignment {
         // Check that we can expand the command.
         // Make a new error list so we can fix the offset for just those, then append later.
         let mut new_errors = ParseErrorList::new();
