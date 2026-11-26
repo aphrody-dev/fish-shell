@@ -60,8 +60,13 @@ On a real host most of the time is in the distro's `vendor_conf.d`. On n1,
 
 ## Tests (n1, debug build)
 
-`cargo test --workspace`: 179 passed and 2 failed. `tests/test_driver.py`: 247 of 249 passed, 8 skipped.
-These 4 failures also fail on unmodified upstream master on n1:
-`test_history_external_rewrite_increases_last_added_timestamp`, `tmux-abbr.fish`,
-`check-completions.fish` (the cpupower wrapper writes to stderr), and `test_new_parser_ad_hoc`, which this
-branch fixes (`a=` is no longer an error by itself).
+At this branch's head:
+- `cargo test --workspace`: 180 passed, 1 failed.
+- `tests/test_driver.py`: 244 of 249 passed, 8 skipped, at load 100. In an earlier full run at load 20, 247 of 249 passed.
+
+Failures that unmodified upstream master also has on n1:
+`test_history_external_rewrite_increases_last_added_timestamp`, `tmux-abbr.fish`, and
+`check-completions.fish` (the cpupower wrapper writes to stderr).
+
+`tmux-invocation.fish`, `tmux-set.fish` and `pexpects/wait.py` failed only under load and pass when rerun.
+`wait.py` also fails now and then on upstream.
