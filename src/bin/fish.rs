@@ -530,7 +530,13 @@ fn throwing_main() -> i32 {
     // Construct the root parser!
     let env = EnvStack::globals().create_child(true /* dispatches_var_changes */);
     let parser = &mut Parser::new(env, CancelBehavior::Clear);
-    parser.set_syncs_uvars(!opts.no_config);
+    // Universal variables are read at startup. Only interactive sessions write them back, so
+    // scripts, CI steps and ssh one-liners leave fish_variables alone; FISH_SAVE_UVARS=1 lets them.
+    parser.set_syncs_uvars(
+        !opts.no_config
+            && (is_interactive_session()
+                || env::var_os("FISH_SAVE_UVARS").is_some_and(|v| v == "1")),
+    );
 
     if !opts.no_exec && !opts.no_config {
         read_init(parser, config_paths.as_ref().unwrap());

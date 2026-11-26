@@ -81,6 +81,8 @@ def makeenv(script_path: Path, home: Path) -> Dict[str, str]:
             "FISH_FAST_FAIL": "1",
             # Tests check how fish handles bad -c strings; posix-fallback.fish turns it on.
             "FISH_POSIX_FALLBACK": "0",
+            # Tests save universal variables from scripts; noninteractive-uvars.fish checks the default.
+            "FISH_SAVE_UVARS": "1",
             "FISH_UNIT_TESTS_RUNNING": "1",
             "XDG_CONFIG_HOME": str(xdg_config),
             "XDG_DATA_HOME": str(xdg_data),
